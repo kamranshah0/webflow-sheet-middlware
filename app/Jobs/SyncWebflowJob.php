@@ -178,7 +178,18 @@ class SyncWebflowJob implements ShouldQueue
 
                     // DYNAMIC FILTER
                     if (in_array($webflowKey, $validFieldSlugs)) {
-                        $fields[$webflowKey] = is_null($value) ? '' : (string) $value;
+                        $val = is_null($value) ? '' : (string) $value;
+                        
+                        // Automatically format date fields for Webflow
+                        if (str_contains($webflowKey, 'date') && $val !== '') {
+                            try {
+                                $val = \Carbon\Carbon::parse($val)->toIso8601ZuluString();
+                            } catch (\Exception $e) {
+                                // Keep original if parsing fails
+                            }
+                        }
+                        
+                        $fields[$webflowKey] = $val;
                     }
                 }
 
@@ -202,11 +213,9 @@ class SyncWebflowJob implements ShouldQueue
                     $itemId = null;
                     if ($response->successful()) {
                         $items = $response->json()['items'] ?? [];
-                        foreach ($items as $item) {
-                            if (($item['fieldData']['slug'] ?? '') === 'summary') {
-                                $itemId = $item['id'];
-                                break;
-                            }
+                        // Check if any item exists in this summary collection
+                        if (count($items) > 0) {
+                            $itemId = $items[0]['id']; // Just take the very first item and update it
                         }
                     }
 
@@ -236,9 +245,24 @@ class SyncWebflowJob implements ShouldQueue
                     Log::info("Webflow Site Published Successfully.");
 
                 } catch (\Exception $e) {
-                    Log::error("Error processing single summary record: " . $e->getMessage());
+                    $reason = $e->getMessage();
+                    if ($e instanceof \Illuminate\Http\Client\RequestException && $e->response) {
+                        $reason = $e->response->body();
+                    }
+                    Log::error("Error processing single summary record: " . $reason);
                     $errors++;
-                    if ($syncJob) $syncJob->increment('error_count');
+                    if ($syncJob) {
+                        $syncJob->increment('error_count');
+                        $syncJob->update([
+                            'error_log' => json_encode([
+                                [
+                                    'type' => 'error',
+                                    'identifier' => 'Summary Record',
+                                    'reason' => $reason
+                                ]
+                            ])
+                        ]);
+                    }
                 }
 
                 if ($syncJob) {

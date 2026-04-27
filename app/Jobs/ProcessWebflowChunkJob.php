@@ -43,8 +43,22 @@ class ProcessWebflowChunkJob implements ShouldQueue
      */
     public function handle(WebflowService $webflowService): void
     {
+        if ($this->syncJobId) {
+            $syncJob = \App\Models\SyncJob::find($this->syncJobId);
+            if ($syncJob && $syncJob->status === 'cancelled') {
+                Log::info("ProcessWebflowChunkJob skipped. SyncJob was cancelled. ID: {$this->syncJobId}");
+                return; // Stop execution if cancelled
+            }
+        }
+
         if ($this->chunkId) {
-            \App\Models\SyncJobChunk::where('id', $this->chunkId)->update([
+            $chunk = \App\Models\SyncJobChunk::find($this->chunkId);
+            if ($chunk && $chunk->status === 'cancelled') {
+                Log::info("ProcessWebflowChunkJob skipped. Chunk was cancelled. ID: {$this->chunkId}");
+                return;
+            }
+
+            $chunk->update([
                 'status' => 'processing',
                 'started_at' => now(),
             ]);
@@ -53,15 +67,24 @@ class ProcessWebflowChunkJob implements ShouldQueue
         $updated = 0;
         $skipped = 0;
         $errors = 0;
+        $logs = []; // Collect detailed logs
 
         Log::info("Starting chunk processing for Collection: {$this->collectionId}");
 
-        foreach ($this->chunk as $row) {
+        foreach ($this->chunk as $index => $row) {
+            $rowNumber = $index + 1; // 1-based index within the chunk for easier tracking
+
             // Use 'ID' column as the primary unique identifier as requested by the user
             $tradeId = $row['ID'] ?? $row['id'] ?? $row['Trade ID'] ?? $row['trade_id'] ?? $row['trade-id'] ?? null;
             
             if (!$tradeId || trim((string)$tradeId) === '') {
                 $skipped++;
+                $logs[] = [
+                    'type' => 'skip',
+                    'identifier' => "Row {$rowNumber}",
+                    'reason' => 'Missing Trade ID or ID is empty',
+                    'data' => json_encode($row)
+                ];
                 continue; // Skip rows without a unique ID
             }
 
@@ -101,7 +124,18 @@ class ProcessWebflowChunkJob implements ShouldQueue
 
                 // DYNAMIC FILTER: Only add the field if it exists in the Webflow Collection Schema
                 if (in_array($webflowKey, $this->validFieldSlugs)) {
-                    $fields[$webflowKey] = is_null($value) ? '' : (string) $value;
+                    $val = is_null($value) ? '' : (string) $value;
+                    
+                    // Automatically format date fields for Webflow
+                    if (str_contains($webflowKey, 'date') && $val !== '') {
+                        try {
+                            $val = \Carbon\Carbon::parse($val)->toIso8601ZuluString();
+                        } catch (\Exception $e) {
+                            // Keep original if parsing fails
+                        }
+                    }
+
+                    $fields[$webflowKey] = $val;
                 }
             }
 
@@ -119,8 +153,18 @@ class ProcessWebflowChunkJob implements ShouldQueue
                 // Rate limit prevention (0.3s)
                 usleep(300000); 
             } catch (\Exception $e) {
-                Log::error("Error processing Trade ID {$tradeId}: " . $e->getMessage());
+                $reason = $e->getMessage();
+                if ($e instanceof \Illuminate\Http\Client\RequestException && $e->response) {
+                    $reason = $e->response->body();
+                }
+                Log::error("Error processing Trade ID {$tradeId}: " . $reason);
                 $errors++;
+                $logs[] = [
+                    'type' => 'error',
+                    'identifier' => "Trade ID: {$tradeId}",
+                    'reason' => $reason,
+                    'data' => json_encode($fields)
+                ];
             }
         }
 
@@ -135,6 +179,7 @@ class ProcessWebflowChunkJob implements ShouldQueue
                 'skipped_count' => $skipped,
                 'error_count' => $errors,
                 'completed_at' => now(),
+                'error_log' => !empty($logs) ? json_encode($logs) : null,
             ]);
         }
 

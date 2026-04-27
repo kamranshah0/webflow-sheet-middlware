@@ -26,4 +26,6 @@ Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/api/dashboard/data', [DashboardController::class, 'apiData']);
+    Route::post('/api/dashboard/jobs/{id}/cancel', [DashboardController::class, 'cancelJob']);
+    Route::post('/api/dashboard/reset-cooldowns', [DashboardController::class, 'resetCooldowns']);
 });

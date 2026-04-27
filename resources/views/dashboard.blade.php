@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Admin Dashboard - Webflow Sync</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -119,9 +120,15 @@
                     <i data-lucide="list" class="w-5 h-5 text-blue-400"></i>
                     <span>Sync History</span>
                 </h2>
-                <button onclick="fetchJobs()" class="text-blue-300 hover:text-white transition-colors">
-                    <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-                </button>
+                <div class="flex items-center space-x-4">
+                    <button onclick="resetCooldownsJS()" class="text-xs bg-slate-700/50 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-600 transition-colors flex items-center space-x-1">
+                        <i data-lucide="timer-reset" class="w-4 h-4"></i>
+                        <span>Reset Cooldowns</span>
+                    </button>
+                    <button onclick="fetchJobs()" class="text-blue-300 hover:text-white transition-colors" title="Refresh">
+                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                    </button>
+                </div>
             </div>
             
             <div class="overflow-x-auto">
@@ -183,10 +190,13 @@
                 'queued': 'bg-slate-500/20 text-slate-300 border-slate-500/30',
                 'processing': 'bg-blue-500/20 text-blue-300 border-blue-500/30 animate-pulse',
                 'completed': 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-                'failed': 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                'completed_cleared': 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+                'failed': 'bg-rose-500/20 text-rose-300 border-rose-500/30',
+                'cancelled': 'bg-rose-500/20 text-rose-300 border-rose-500/30'
             };
             const style = styles[status] || styles['queued'];
-            return `<span class="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${style}">${status.toUpperCase()}</span>`;
+            const displayStatus = status === 'completed_cleared' ? 'COMPLETED' : status.toUpperCase();
+            return `<span class="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${style}">${displayStatus}</span>`;
         }
 
         function formatDate(dateString) {
@@ -203,7 +213,34 @@
             
             let contentHtml = '';
             if (!job.chunks || job.chunks.length === 0) {
-                contentHtml = '<div class="text-center py-8 text-slate-400">No chunks data available yet.</div>';
+                // If no chunks, check if the job itself has an error log (e.g. for summary jobs)
+                let jobLogsHtml = '';
+                if (job.error_log) {
+                    try {
+                        const logs = JSON.parse(job.error_log);
+                        if (logs && logs.length > 0) {
+                            jobLogsHtml = `<div class="space-y-3 mt-4 text-sm bg-black/20 p-4 rounded-xl border border-white/5">`;
+                            logs.forEach(log => {
+                                const icon = log.type === 'error' ? '<i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 inline"></i>' : '<i data-lucide="skip-forward" class="w-4 h-4 text-slate-400 inline"></i>';
+                                const color = log.type === 'error' ? 'text-rose-200' : 'text-slate-300';
+                                jobLogsHtml += `<div class="flex items-start gap-2 ${color}">
+                                    <div class="mt-0.5">${icon}</div>
+                                    <div>
+                                        <span class="font-medium">${log.identifier}:</span> ${log.reason}
+                                    </div>
+                                </div>`;
+                            });
+                            jobLogsHtml += `</div>`;
+                        }
+                    } catch(e) {
+                        jobLogsHtml = `<div class="mt-4 p-4 bg-rose-500/10 border border-rose-500/20 text-rose-200 rounded-xl text-sm">${job.error_log}</div>`;
+                    }
+                }
+                
+                contentHtml = `<div class="text-center py-8 text-slate-400">
+                    <p>No chunk data available (Single record sync).</p>
+                    ${jobLogsHtml}
+                </div>`;
             } else {
                 contentHtml += `
                     <table class="min-w-full divide-y divide-white/10 text-sm">
@@ -223,9 +260,37 @@
                 `;
 
                 job.chunks.forEach(chunk => {
+                    let logsHtml = '';
+                    if (chunk.error_log) {
+                        try {
+                            const logs = JSON.parse(chunk.error_log);
+                            if (logs && logs.length > 0) {
+                                logsHtml = `<tr class="bg-black/20 text-xs hidden" id="logs-chunk-${chunk.id}">
+                                    <td colspan="8" class="p-4">
+                                        <div class="space-y-2 max-h-40 overflow-y-auto pr-2">`;
+                                logs.forEach(log => {
+                                    const icon = log.type === 'error' ? '<i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 inline"></i>' : '<i data-lucide="skip-forward" class="w-4 h-4 text-slate-400 inline"></i>';
+                                    const color = log.type === 'error' ? 'text-rose-200' : 'text-slate-300';
+                                    logsHtml += `<div class="flex items-start gap-2 ${color}">
+                                        <div class="mt-0.5">${icon}</div>
+                                        <div>
+                                            <span class="font-medium">${log.identifier}:</span> ${log.reason}
+                                        </div>
+                                    </div>`;
+                                });
+                                logsHtml += `</div></td></tr>`;
+                            }
+                        } catch(e) {}
+                    }
+
+                    const hasLogs = logsHtml !== '';
+
                     contentHtml += `
                         <tr class="hover:bg-white/5 transition-colors">
-                            <td class="py-3 text-white font-medium">#${chunk.chunk_index}</td>
+                            <td class="py-3 text-white font-medium">
+                                #${chunk.chunk_index}
+                                ${hasLogs ? `<button onclick="toggleLogs(${chunk.id})" class="ml-2 text-[10px] bg-slate-700/50 hover:bg-slate-700 px-2 py-0.5 rounded border border-slate-600">View Logs</button>` : ''}
+                            </td>
                             <td class="py-3">${getStatusBadge(chunk.status)}</td>
                             <td class="py-3 text-center text-slate-300">${chunk.processed_rows} / ${chunk.total_rows}</td>
                             <td class="py-3 text-center text-emerald-400">${chunk.created_count}</td>
@@ -234,6 +299,7 @@
                             <td class="py-3 text-center text-rose-400">${chunk.error_count}</td>
                             <td class="py-3 text-right text-slate-400 text-xs">${formatDate(chunk.started_at)}</td>
                         </tr>
+                        ${logsHtml}
                     `;
                 });
 
@@ -246,6 +312,13 @@
 
         function closeModal() {
             document.getElementById('chunk-modal').classList.add('hidden');
+        }
+
+        function toggleLogs(chunkId) {
+            const el = document.getElementById('logs-chunk-' + chunkId);
+            if (el) {
+                el.classList.toggle('hidden');
+            }
         }
 
         async function fetchJobs() {
@@ -328,7 +401,11 @@
                                 </div>
                             </div>
                         </td>
-                        <td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium">
+                        <td class="px-6 py-5 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                            ${(job.status === 'queued' || job.status === 'processing') ? 
+                            `<button onclick="cancelJobJS(${job.id})" class="text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 transition-colors">
+                                Cancel
+                            </button>` : ''}
                             <button onclick="openModal(${job.id})" class="text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-colors">
                                 Details
                             </button>
@@ -341,6 +418,57 @@
                 document.getElementById('last-updated').innerText = new Date().toLocaleTimeString();
             } catch (error) {
                 console.error("Error fetching dashboard data:", error);
+            }
+        }
+
+        async function cancelJobJS(jobId) {
+            if (!confirm('Are you sure you want to cancel this job? This will stop background processing.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/dashboard/jobs/${jobId}/cancel`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                });
+
+                if (response.ok) {
+                    fetchJobs(); // Refresh immediately
+                } else {
+                    alert('Failed to cancel job.');
+                }
+            } catch (error) {
+                console.error("Error cancelling job:", error);
+                alert('Error cancelling job.');
+            }
+        }
+
+        async function resetCooldownsJS() {
+            if (!confirm('Are you sure you want to reset all active cooldowns? This will allow new jobs to start immediately.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/dashboard/reset-cooldowns', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    }
+                });
+
+                if (response.ok) {
+                    alert('Cooldowns reset successfully. You can now send new hits.');
+                    fetchJobs(); // Refresh immediately
+                } else {
+                    alert('Failed to reset cooldowns.');
+                }
+            } catch (error) {
+                console.error("Error resetting cooldowns:", error);
+                alert('Error resetting cooldowns.');
             }
         }
 

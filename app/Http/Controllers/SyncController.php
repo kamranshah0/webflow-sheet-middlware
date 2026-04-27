@@ -39,6 +39,32 @@ class SyncController extends Controller
             ], 400);
         }
 
+        // Concurrency Control & Cooldown Check
+        $lastJob = \App\Models\SyncJob::where('category', $category)
+            ->where('type', $type)
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        if ($lastJob) {
+            // Check if job is currently running
+            if (in_array($lastJob->status, ['queued', 'processing'])) {
+                Log::info("Ignoring sync request: Job already running for Category={$category}, Type={$type}");
+                return response()->json([
+                    'status' => 'ignored',
+                    'message' => 'A sync for this category and type is already in progress.'
+                ]);
+            }
+
+            // Check 10-minute cooldown for completed jobs (ONLY FOR MAIN TYPE)
+            if ($type !== 'summary' && $lastJob->status === 'completed' && $lastJob->created_at->diffInMinutes(now()) < 10) {
+                Log::info("Ignoring sync request: Cooldown active for Category={$category}, Type={$type}");
+                return response()->json([
+                    'status' => 'ignored',
+                    'message' => 'Cooldown active. Please wait 10 minutes between sync requests.'
+                ]);
+            }
+        }
+
         // Dispatch the background job
         SyncWebflowJob::dispatch($category, $type);
 

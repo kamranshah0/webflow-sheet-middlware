@@ -20,4 +20,31 @@ class DashboardController extends Controller
         }])->orderBy('created_at', 'desc')->take(50)->get();
         return response()->json($jobs);
     }
+
+    public function cancelJob($id)
+    {
+        $job = SyncJob::findOrFail($id);
+        
+        if (in_array($job->status, ['queued', 'processing'])) {
+            $job->status = 'cancelled';
+            $job->save();
+
+            // Cancel all pending chunks as well
+            \App\Models\SyncJobChunk::where('sync_job_id', $job->id)
+                ->whereIn('status', ['pending', 'processing'])
+                ->update(['status' => 'cancelled']);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    public function resetCooldowns()
+    {
+        // Update recently completed 'main' jobs to 'completed_cleared' so they bypass the cooldown check
+        \App\Models\SyncJob::where('status', 'completed')
+            ->where('created_at', '>=', now()->subMinutes(10))
+            ->update(['status' => 'completed_cleared']);
+
+        return response()->json(['success' => true]);
+    }
 }
