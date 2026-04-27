@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use App\Services\GoogleSheetsService;
 use App\Services\WebflowService;
+use App\Models\SyncJob;
 
 class SyncWebflowJob implements ShouldQueue
 {
@@ -21,6 +22,7 @@ class SyncWebflowJob implements ShouldQueue
 
     protected $category;
     protected $type;
+    protected $syncJobId;
 
     /**
      * Create a new job instance.
@@ -29,6 +31,15 @@ class SyncWebflowJob implements ShouldQueue
     {
         $this->category = $category;
         $this->type = $type;
+        
+        // Create the DB record immediately when dispatched
+        $syncJob = SyncJob::create([
+            'category' => $category,
+            'type' => $type,
+            'status' => 'queued',
+            'started_at' => now(),
+        ]);
+        $this->syncJobId = $syncJob->id;
     }
 
     /**
@@ -36,6 +47,11 @@ class SyncWebflowJob implements ShouldQueue
      */
     public function handle(GoogleSheetsService $sheetsService, WebflowService $webflowService): void
     {
+        $syncJob = SyncJob::find($this->syncJobId);
+        if ($syncJob) {
+            $syncJob->update(['status' => 'processing']);
+        }
+
         Log::info("Starting SyncWebflowJob for Category: {$this->category}, Type: {$this->type}");
 
         // 1. Resolve Mapping
@@ -43,6 +59,7 @@ class SyncWebflowJob implements ShouldQueue
         
         if (!$mapping) {
             Log::error("No mapping found for Category: {$this->category}");
+            if ($syncJob) $syncJob->update(['status' => 'failed', 'error_log' => "No config mapping found"]);
             return;
         }
 
@@ -64,8 +81,13 @@ class SyncWebflowJob implements ShouldQueue
             $totalRows = count($rows);
             Log::info("Found " . $totalRows . " rows in {$sheetName}");
 
+            if ($syncJob) {
+                $syncJob->update(['total_rows' => $totalRows]);
+            }
+
             if (empty($rows)) {
                 Log::info("No data found in {$sheetName}. Exiting.");
+                if ($syncJob) $syncJob->update(['status' => 'completed', 'completed_at' => now()]);
                 return;
             }
 
@@ -87,10 +109,26 @@ class SyncWebflowJob implements ShouldQueue
 
                 // 5. Perform Upsert in Chunks (Bulk)
                 $chunks = array_chunk($rows, 100);
+                
+                if ($syncJob) {
+                    $syncJob->update(['total_chunks' => count($chunks)]);
+                }
 
                 foreach ($chunks as $chunkIndex => $chunk) {
                     Log::info("Dispatching chunk " . ($chunkIndex + 1) . " of " . count($chunks) . " to queue.");
-                    ProcessWebflowChunkJob::dispatch($collectionId, $chunk, $existingItems, $validFieldSlugs);
+                    
+                    $chunkId = null;
+                    if ($syncJob) {
+                        $chunkRecord = \App\Models\SyncJobChunk::create([
+                            'sync_job_id' => $this->syncJobId,
+                            'chunk_index' => $chunkIndex + 1,
+                            'status' => 'pending',
+                            'total_rows' => count($chunk),
+                        ]);
+                        $chunkId = $chunkRecord->id;
+                    }
+
+                    ProcessWebflowChunkJob::dispatch($collectionId, $chunk, $existingItems, $validFieldSlugs, $this->syncJobId, $chunkId);
                 }
 
             } elseif ($this->type === 'summary') {
@@ -184,6 +222,15 @@ class SyncWebflowJob implements ShouldQueue
                         Log::info("Summary record created.");
                     }
 
+                    if ($syncJob) {
+                        $syncJob->increment('processed_rows');
+                        if ($itemId) {
+                            $syncJob->increment('updated_count');
+                        } else {
+                            $syncJob->increment('created_count');
+                        }
+                    }
+
                     Log::info("Publishing Webflow Site for summary...");
                     $webflowService->publishSite();
                     Log::info("Webflow Site Published Successfully.");
@@ -191,6 +238,11 @@ class SyncWebflowJob implements ShouldQueue
                 } catch (\Exception $e) {
                     Log::error("Error processing single summary record: " . $e->getMessage());
                     $errors++;
+                    if ($syncJob) $syncJob->increment('error_count');
+                }
+
+                if ($syncJob) {
+                    $syncJob->update(['status' => 'completed', 'completed_at' => now()]);
                 }
             }
 
@@ -199,6 +251,12 @@ class SyncWebflowJob implements ShouldQueue
 
         } catch (\Exception $e) {
             Log::error("SyncWebflowJob Failed: " . $e->getMessage());
+            if ($this->syncJobId) {
+                SyncJob::find($this->syncJobId)?->update([
+                    'status' => 'failed',
+                    'error_log' => $e->getMessage()
+                ]);
+            }
         }
     }
 }

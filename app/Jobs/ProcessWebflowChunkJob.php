@@ -22,16 +22,20 @@ class ProcessWebflowChunkJob implements ShouldQueue
     protected $chunk;
     protected $existingItems;
     protected $validFieldSlugs;
+    protected $syncJobId;
+    protected $chunkId;
 
     /**
      * Create a new job instance.
      */
-    public function __construct($collectionId, $chunk, $existingItems, $validFieldSlugs)
+    public function __construct($collectionId, $chunk, $existingItems, $validFieldSlugs, $syncJobId = null, $chunkId = null)
     {
         $this->collectionId = $collectionId;
         $this->chunk = $chunk;
         $this->existingItems = $existingItems;
         $this->validFieldSlugs = $validFieldSlugs;
+        $this->syncJobId = $syncJobId;
+        $this->chunkId = $chunkId;
     }
 
     /**
@@ -39,8 +43,15 @@ class ProcessWebflowChunkJob implements ShouldQueue
      */
     public function handle(WebflowService $webflowService): void
     {
+        if ($this->chunkId) {
+            \App\Models\SyncJobChunk::where('id', $this->chunkId)->update([
+                'status' => 'processing',
+                'started_at' => now(),
+            ]);
+        }
         $created = 0;
         $updated = 0;
+        $skipped = 0;
         $errors = 0;
 
         Log::info("Starting chunk processing for Collection: {$this->collectionId}");
@@ -50,6 +61,7 @@ class ProcessWebflowChunkJob implements ShouldQueue
             $tradeId = $row['ID'] ?? $row['id'] ?? $row['Trade ID'] ?? $row['trade_id'] ?? $row['trade-id'] ?? null;
             
             if (!$tradeId || trim((string)$tradeId) === '') {
+                $skipped++;
                 continue; // Skip rows without a unique ID
             }
 
@@ -112,7 +124,41 @@ class ProcessWebflowChunkJob implements ShouldQueue
             }
         }
 
-        Log::info("Chunk processing finished. Created: {$created}, Updated: {$updated}, Errors: {$errors}");
+        Log::info("Chunk processing finished. Created: {$created}, Updated: {$updated}, Skipped: {$skipped}, Errors: {$errors}");
+
+        if ($this->chunkId) {
+            \App\Models\SyncJobChunk::where('id', $this->chunkId)->update([
+                'status' => 'completed',
+                'processed_rows' => count($this->chunk),
+                'created_count' => $created,
+                'updated_count' => $updated,
+                'skipped_count' => $skipped,
+                'error_count' => $errors,
+                'completed_at' => now(),
+            ]);
+        }
+
+        if ($this->syncJobId) {
+            $syncJob = \App\Models\SyncJob::find($this->syncJobId);
+            if ($syncJob) {
+                // We use DB operations directly or increment to avoid race conditions
+                $syncJob->increment('processed_rows', count($this->chunk));
+                $syncJob->increment('created_count', $created);
+                $syncJob->increment('updated_count', $updated);
+                $syncJob->increment('skipped_count', $skipped);
+                $syncJob->increment('error_count', $errors);
+                $syncJob->increment('processed_chunks', 1);
+
+                // If all chunks are processed, mark as completed
+                $syncJob->refresh();
+                if ($syncJob->processed_chunks >= $syncJob->total_chunks) {
+                    $syncJob->update([
+                        'status' => 'completed',
+                        'completed_at' => now(),
+                    ]);
+                }
+            }
+        }
 
         // Publish after the chunk finishes processing
         Log::info("Publishing Webflow Site after chunk completion...");
