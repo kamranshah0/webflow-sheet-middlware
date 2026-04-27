@@ -69,7 +69,7 @@ class ProcessWebflowChunkJob implements ShouldQueue
         $errors = 0;
         $logs = []; // Collect detailed logs
 
-        Log::info("Starting chunk processing for Collection: {$this->collectionId}");
+        $itemIdsToPublish = [];
 
         foreach ($this->chunk as $index => $row) {
             $rowNumber = $index + 1; // 1-based index within the chunk for easier tracking
@@ -89,10 +89,17 @@ class ProcessWebflowChunkJob implements ShouldQueue
             }
 
             // Support 'TICKER' for Earnings sheet and 'SYMBOL' for others
-            $symbol = $row['TICKER'] ?? $row['Ticker'] ?? $row['ticker'] ?? $row['SYMBOL'] ?? $row['symbol'] ?? 'Unknown';
+            $symbol = trim($row['TICKER'] ?? $row['Ticker'] ?? $row['ticker'] ?? $row['SYMBOL'] ?? $row['symbol'] ?? '');
+            if ($symbol === '') {
+                $symbol = 'Unknown';
+            }
             
+            $name = trim($row['COMPANY'] ?? $row['Company'] ?? $row['name'] ?? '');
+            if ($name === '') {
+                $name = $symbol;
+            }
+
             $slug = Str::slug($symbol . '-' . $tradeId . '-' . uniqid());
-            $name = $row['COMPANY'] ?? $row['Company'] ?? $row['name'] ?? $symbol;
 
             // In Webflow, the field with display name "Trade ID" has the slug "equity-value"
             $fields = [
@@ -140,14 +147,23 @@ class ProcessWebflowChunkJob implements ShouldQueue
             }
 
             try {
+                $itemId = null;
                 if (isset($this->existingItems[(string)$tradeId])) {
                     // UPDATE
-                    $webflowService->updateItem($this->collectionId, $this->existingItems[(string)$tradeId], $fields);
+                    $itemId = $this->existingItems[(string)$tradeId];
+                    $webflowService->updateItem($this->collectionId, $itemId, $fields);
                     $updated++;
                 } else {
                     // CREATE
-                    $webflowService->createItem($this->collectionId, $fields);
+                    $res = $webflowService->createItem($this->collectionId, $fields);
+                    if ($res->successful()) {
+                        $itemId = $res->json()['id'] ?? null;
+                    }
                     $created++;
+                }
+
+                if ($itemId) {
+                    $itemIdsToPublish[] = $itemId;
                 }
 
                 // Rate limit prevention (0.3s)
@@ -169,6 +185,16 @@ class ProcessWebflowChunkJob implements ShouldQueue
         }
 
         Log::info("Chunk processing finished. Created: {$created}, Updated: {$updated}, Skipped: {$skipped}, Errors: {$errors}");
+
+        if (!empty($itemIdsToPublish)) {
+            try {
+                Log::info("Publishing " . count($itemIdsToPublish) . " items directly to all environments...");
+                $webflowService->publishItems($this->collectionId, $itemIdsToPublish);
+                Log::info("Items Published Successfully.");
+            } catch (\Exception $e) {
+                Log::error("Error publishing items: " . $e->getMessage());
+            }
+        }
 
         if ($this->chunkId) {
             \App\Models\SyncJobChunk::where('id', $this->chunkId)->update([
@@ -204,10 +230,5 @@ class ProcessWebflowChunkJob implements ShouldQueue
                 }
             }
         }
-
-        // Publish after the chunk finishes processing
-        Log::info("Publishing Webflow Site after chunk completion...");
-        $webflowService->publishSite();
-        Log::info("Webflow Site Published Successfully.");
     }
 }

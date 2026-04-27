@@ -226,7 +226,10 @@ class SyncWebflowJob implements ShouldQueue
                         Log::info("Summary record updated.");
                     } else {
                         // CREATE
-                        $webflowService->createItem($collectionId, $fields);
+                        $res = $webflowService->createItem($collectionId, $fields);
+                        if ($res->successful()) {
+                            $itemId = $res->json()['id'] ?? null;
+                        }
                         $created++;
                         Log::info("Summary record created.");
                     }
@@ -240,9 +243,11 @@ class SyncWebflowJob implements ShouldQueue
                         }
                     }
 
-                    Log::info("Publishing Webflow Site for summary...");
-                    $webflowService->publishSite();
-                    Log::info("Webflow Site Published Successfully.");
+                    if ($itemId) {
+                        Log::info("Publishing Webflow Item for summary to all environments...");
+                        $webflowService->publishItems($collectionId, [$itemId]);
+                        Log::info("Webflow Item Published Successfully.");
+                    }
 
                 } catch (\Exception $e) {
                     $reason = $e->getMessage();

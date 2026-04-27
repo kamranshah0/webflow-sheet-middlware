@@ -114,7 +114,7 @@ class WebflowService
     }
 
     /**
-     * Publish the Webflow Site
+     * Publish the Webflow Site (to staging only if custom domains are not passed)
      */
     public function publishSite()
     {
@@ -124,6 +124,20 @@ class WebflowService
             ->withHeaders(['accept-version' => '1.0.0'])
             ->post("https://api.webflow.com/v2/sites/{$this->siteId}/publish", [
                 "publishToWebflowSubdomain" => true
+            ]);
+    }
+
+    /**
+     * Publish specific items in a Collection (Live everywhere)
+     */
+    public function publishItems($collectionId, $itemIds)
+    {
+        return Http::withToken($this->token)
+            ->timeout(30)
+            ->retry(3, 1000)
+            ->withHeaders(['accept-version' => '1.0.0'])
+            ->post("https://api.webflow.com/v2/collections/{$collectionId}/items/publish", [
+                "itemIds" => $itemIds
             ]);
     }
 }
