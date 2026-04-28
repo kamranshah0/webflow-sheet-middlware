@@ -21,3 +21,4 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 Route::post('/sheet-test', [TestController::class, 'handle']);
 Route::post('/sync', [SyncController::class, 'handle']);
+Route::get('/debug/sheet', [SyncController::class, 'debugSheetData']);

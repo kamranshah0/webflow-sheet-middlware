@@ -37,7 +37,7 @@ class GoogleSheetsService
             throw new \Exception("Google Sheets Service is not initialized.");
         }
 
-        $range = "{$sheetName}!A1:Z10000";
+        $range = "{$sheetName}!A1:ZZ10000";
         $response = $this->service->spreadsheets_values->get($spreadsheetId, $range);
         $values = $response->getValues();
 

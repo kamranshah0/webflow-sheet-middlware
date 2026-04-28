@@ -27,5 +27,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/api/dashboard/data', [DashboardController::class, 'apiData']);
     Route::post('/api/dashboard/jobs/{id}/cancel', [DashboardController::class, 'cancelJob']);
+    Route::post('/api/dashboard/jobs/{id}/delete', [DashboardController::class, 'deleteJob']);
     Route::post('/api/dashboard/reset-cooldowns', [DashboardController::class, 'resetCooldowns']);
+    Route::get('/api/dashboard/settings', [DashboardController::class, 'getSettings']);
+    Route::post('/api/dashboard/settings', [DashboardController::class, 'updateSettings']);
 });

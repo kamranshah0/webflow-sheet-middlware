@@ -73,6 +73,7 @@ class ProcessWebflowChunkJob implements ShouldQueue
 
         foreach ($this->chunk as $index => $row) {
             $rowNumber = $index + 1; // 1-based index within the chunk for easier tracking
+            
 
             // Use 'ID' column as the primary unique identifier as requested by the user
             $tradeId = $row['ID'] ?? $row['id'] ?? $row['Trade ID'] ?? $row['trade_id'] ?? $row['trade-id'] ?? null;
@@ -136,7 +137,7 @@ class ProcessWebflowChunkJob implements ShouldQueue
                     // Automatically format date fields for Webflow
                     if (str_contains($webflowKey, 'date') && $val !== '') {
                         try {
-                            $val = \Carbon\Carbon::parse($val)->toIso8601ZuluString();
+                            $val = \Carbon\Carbon::parse($val)->format('Y-m-d');
                         } catch (\Exception $e) {
                             // Keep original if parsing fails
                         }

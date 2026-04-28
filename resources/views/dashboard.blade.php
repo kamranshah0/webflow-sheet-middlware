@@ -121,6 +121,10 @@
                     <span>Sync History</span>
                 </h2>
                 <div class="flex items-center space-x-4">
+                    <button onclick="openSettingsModal()" class="text-xs bg-blue-600/50 hover:bg-blue-600 text-blue-100 px-3 py-1.5 rounded-lg border border-blue-500/30 transition-colors flex items-center space-x-1">
+                        <i data-lucide="settings" class="w-4 h-4"></i>
+                        <span>Cooldown Settings</span>
+                    </button>
                     <button onclick="resetCooldownsJS()" class="text-xs bg-slate-700/50 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-600 transition-colors flex items-center space-x-1">
                         <i data-lucide="timer-reset" class="w-4 h-4"></i>
                         <span>Reset Cooldowns</span>
@@ -175,6 +179,70 @@
                         <!-- Chunks injected here -->
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Confirmation Modal -->
+    <div id="confirm-modal" class="fixed inset-0 z-[110] hidden">
+        <div class="absolute inset-0 bg-slate-900/80 backdrop-blur-sm transition-opacity" onclick="closeConfirmModal()"></div>
+        <div class="flex items-center justify-center min-h-screen px-4">
+            <div class="glass-card rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:max-w-sm w-full border border-white/20">
+                <div class="p-6 text-center">
+                    <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-blue-500/30">
+                        <i data-lucide="help-circle" class="w-8 h-8 text-blue-400"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-2">Are you sure?</h3>
+                    <p class="text-slate-300 text-sm mb-6" id="confirm-message">This action cannot be undone.</p>
+                    <div class="flex space-x-3">
+                        <button onclick="closeConfirmModal()" class="flex-1 bg-white/10 hover:bg-white/20 text-white font-semibold py-2 rounded-xl border border-white/10 transition-colors">
+                            Cancel
+                        </button>
+                        <button id="confirm-btn-action" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-xl transition-colors">
+                            Confirm
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast-container" class="fixed bottom-8 right-8 z-[120] space-y-3"></div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 z-[100] hidden">
+        <div class="absolute inset-0 bg-slate-900/80 backdrop-blur-sm transition-opacity" onclick="closeSettingsModal()"></div>
+        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
+            <div class="glass-card rounded-2xl text-left overflow-hidden shadow-2xl transform transition-all sm:my-8 sm:max-w-md w-full border border-white/20">
+                <div class="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-white/5">
+                    <h3 class="text-lg font-semibold text-white flex items-center space-x-2">
+                        <i data-lucide="settings" class="w-5 h-5 text-blue-400"></i>
+                        <span>Cooldown Settings (Minutes)</span>
+                    </h3>
+                    <button onclick="closeSettingsModal()" class="text-slate-400 hover:text-white transition-colors">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <form id="settings-form" onsubmit="saveSettings(event)" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-blue-200 mb-1">Earning Cooldown</label>
+                        <input type="number" name="cooldown_earning" id="cooldown_earning" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors" placeholder="10">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-blue-200 mb-1">Valuation Cooldown</label>
+                        <input type="number" name="cooldown_valuation" id="cooldown_valuation" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors" placeholder="10">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-blue-200 mb-1">Dark Pool Cooldown</label>
+                        <input type="number" name="cooldown_dark_pool" id="cooldown_dark_pool" class="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 transition-colors" placeholder="10">
+                    </div>
+                    <div class="pt-4">
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded-xl transition-colors">
+                            Save Settings
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
@@ -409,6 +477,9 @@
                             <button onclick="openModal(${job.id})" class="text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-colors">
                                 Details
                             </button>
+                            <button onclick="deleteJobJS(${job.id})" class="text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-lg border border-rose-500/20 transition-colors">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
                         </td>
                     `;
                     tbody.appendChild(tr);
@@ -421,55 +492,185 @@
             }
         }
 
+        // Modal & Notification Utilities
+        let confirmCallback = null;
+
+        function showConfirm(message, callback) {
+            document.getElementById('confirm-message').innerText = message;
+            confirmCallback = callback;
+            document.getElementById('confirm-modal').classList.remove('hidden');
+            
+            // Set up the confirm button click
+            const btn = document.getElementById('confirm-btn-action');
+            btn.onclick = () => {
+                const cb = confirmCallback;
+                closeConfirmModal();
+                if (cb) cb();
+            };
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            confirmCallback = null;
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const colors = {
+                'success': 'from-emerald-600/90 to-emerald-800/90 border-emerald-500/50',
+                'error': 'from-rose-600/90 to-rose-800/90 border-rose-500/50',
+                'info': 'from-blue-600/90 to-blue-800/90 border-blue-500/50'
+            };
+            
+            const icons = {
+                'success': 'check-circle',
+                'error': 'alert-circle',
+                'info': 'info'
+            };
+
+            toast.className = `glass-card bg-gradient-to-br ${colors[type]} p-4 rounded-xl border shadow-2xl flex items-center gap-3 transform translate-y-20 opacity-0 transition-all duration-300 w-80`;
+            toast.innerHTML = `
+                <i data-lucide="${icons[type]}" class="w-5 h-5 text-white"></i>
+                <div class="text-sm font-medium text-white">${message}</div>
+            `;
+            
+            container.appendChild(toast);
+            lucide.createIcons();
+
+            // Animate in
+            setTimeout(() => {
+                toast.classList.remove('translate-y-20', 'opacity-0');
+            }, 10);
+
+            // Remove after 3s
+            setTimeout(() => {
+                toast.classList.add('translate-y-[-20px]', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
         async function cancelJobJS(jobId) {
-            if (!confirm('Are you sure you want to cancel this job? This will stop background processing.')) {
-                return;
+            showConfirm('Are you sure you want to cancel this job? This will stop background processing.', async () => {
+                try {
+                    const response = await fetch(`/api/dashboard/jobs/${jobId}/cancel`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                        }
+                    });
+
+                    if (response.ok) {
+                        showToast('Job cancelled successfully.', 'success');
+                        fetchJobs(); // Refresh immediately
+                    } else {
+                        showToast('Failed to cancel job.', 'error');
+                    }
+                } catch (error) {
+                    console.error("Error cancelling job:", error);
+                    showToast('Error cancelling job.', 'error');
+                }
+            });
+        }
+
+        async function deleteJobJS(jobId) {
+            showConfirm('Are you sure you want to delete this job and its logs? This cannot be undone.', async () => {
+                try {
+                    const response = await fetch(`/api/dashboard/jobs/${jobId}/delete`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                        }
+                    });
+
+                    if (response.ok) {
+                        showToast('Job deleted successfully.', 'success');
+                        fetchJobs(); // Refresh immediately
+                    } else {
+                        showToast('Failed to delete job.', 'error');
+                    }
+                } catch (error) {
+                    console.error("Error deleting job:", error);
+                    showToast('Error deleting job.', 'error');
+                }
+            });
+        }
+
+        async function openSettingsModal() {
+            try {
+                const response = await fetch('/api/dashboard/settings');
+                const settings = await response.json();
+                
+                document.getElementById('cooldown_earning').value = settings.cooldown_earning || 10;
+                document.getElementById('cooldown_valuation').value = settings.cooldown_valuation || 10;
+                document.getElementById('cooldown_dark_pool').value = settings.cooldown_dark_pool || 10;
+                
+                document.getElementById('settings-modal').classList.remove('hidden');
+            } catch (error) {
+                console.error("Error fetching settings:", error);
             }
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        async function saveSettings(event) {
+            event.preventDefault();
+            const formData = new FormData(event.target);
+            const settings = {
+                cooldown_earning: formData.get('cooldown_earning'),
+                cooldown_valuation: formData.get('cooldown_valuation'),
+                cooldown_dark_pool: formData.get('cooldown_dark_pool')
+            };
 
             try {
-                const response = await fetch(`/api/dashboard/jobs/${jobId}/cancel`, {
+                const response = await fetch('/api/dashboard/settings', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                    }
+                    },
+                    body: JSON.stringify({ settings })
                 });
 
                 if (response.ok) {
-                    fetchJobs(); // Refresh immediately
+                    showToast('Settings saved successfully!', 'success');
+                    closeSettingsModal();
                 } else {
-                    alert('Failed to cancel job.');
+                    showToast('Failed to save settings.', 'error');
                 }
             } catch (error) {
-                console.error("Error cancelling job:", error);
-                alert('Error cancelling job.');
+                console.error("Error saving settings:", error);
+                showToast('Error saving settings.', 'error');
             }
         }
 
         async function resetCooldownsJS() {
-            if (!confirm('Are you sure you want to reset all active cooldowns? This will allow new jobs to start immediately.')) {
-                return;
-            }
+            showConfirm('Are you sure you want to reset all active cooldowns? This will allow new jobs to start immediately.', async () => {
+                try {
+                    const response = await fetch('/api/dashboard/reset-cooldowns', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                        }
+                    });
 
-            try {
-                const response = await fetch('/api/dashboard/reset-cooldowns', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                    if (response.ok) {
+                        showToast('Cooldowns reset successfully. You can now send new hits.', 'success');
+                        fetchJobs(); // Refresh immediately
+                    } else {
+                        showToast('Failed to reset cooldowns.', 'error');
                     }
-                });
-
-                if (response.ok) {
-                    alert('Cooldowns reset successfully. You can now send new hits.');
-                    fetchJobs(); // Refresh immediately
-                } else {
-                    alert('Failed to reset cooldowns.');
+                } catch (error) {
+                    console.error("Error resetting cooldowns:", error);
+                    showToast('Error resetting cooldowns.', 'error');
                 }
-            } catch (error) {
-                console.error("Error resetting cooldowns:", error);
-                alert('Error resetting cooldowns.');
-            }
+            });
         }
 
         // Fetch immediately, then every 3 seconds

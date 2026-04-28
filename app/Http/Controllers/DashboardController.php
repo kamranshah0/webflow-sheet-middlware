@@ -47,4 +47,38 @@ class DashboardController extends Controller
 
         return response()->json(['success' => true]);
     }
+
+    public function getSettings()
+    {
+        $settings = \App\Models\Setting::all()->pluck('value', 'key');
+        return response()->json($settings);
+    }
+
+    public function updateSettings(Request $request)
+    {
+        $data = $request->validate([
+            'settings' => 'required|array',
+        ]);
+
+        foreach ($data['settings'] as $key => $value) {
+            \App\Models\Setting::updateOrCreate(
+                ['key' => $key],
+                ['value' => $value]
+            );
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    public function deleteJob($id)
+    {
+        $job = SyncJob::findOrFail($id);
+        
+        // Delete all associated chunks first
+        \App\Models\SyncJobChunk::where('sync_job_id', $job->id)->delete();
+        
+        $job->delete();
+
+        return response()->json(['success' => true]);
+    }
 }

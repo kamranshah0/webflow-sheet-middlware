@@ -55,24 +55,77 @@ class SyncController extends Controller
                 ]);
             }
 
-            // Check 10-minute cooldown for completed jobs (ONLY FOR MAIN TYPE)
-            if ($type !== 'summary' && $lastJob->status === 'completed' && $lastJob->created_at->diffInMinutes(now()) < 10) {
+            // Get dynamic cooldown from settings or default to 10
+            $cooldownMinutes = (int) \App\Models\Setting::where('key', "cooldown_{$category}")->value('value') ?: 10;
+
+            // Check dynamic cooldown for completed jobs (ONLY FOR MAIN TYPE)
+            if ($type !== 'summary' && $lastJob->status === 'completed' && $lastJob->created_at->diffInMinutes(now()) < $cooldownMinutes) {
                 Log::info("Ignoring sync request: Cooldown active for Category={$category}, Type={$type}");
                 return response()->json([
                     'status' => 'ignored',
-                    'message' => 'Cooldown active. Please wait 10 minutes between sync requests.'
+                    'message' => "Cooldown active. Please wait {$cooldownMinutes} minutes between sync requests."
                 ]);
             }
         }
 
-        // Dispatch the background job
+        // Dispatch Background Job
         SyncWebflowJob::dispatch($category, $type);
 
-        Log::info("Dispatched SyncWebflowJob for Category={$category}, Type={$type}");
-
-        // Return immediately
         return response()->json([
-            'status' => 'queued'
+            'status' => 'queued',
+            'message' => 'Sync has been queued and is processing.'
         ]);
+    }
+
+    public function debugSheetData(Request $request, \App\Services\GoogleSheetsService $sheetsService)
+    {
+        $category = $request->query('category');
+        $type = $request->query('type');
+
+        if (!$category || !$type) {
+            return response()->json(['error' => 'Missing category or type'], 400);
+        }
+
+        $mapping = config("sync.{$category}");
+        
+        if (!$mapping) {
+            return response()->json(['error' => "No mapping found for Category: {$category}"], 404);
+        }
+
+        $spreadsheetId = $mapping['spreadsheet_id'];
+        $sheetName = $type === 'main' ? $mapping['main_tab'] : $mapping['summary_tab'];
+
+        try {
+            $rows = $sheetsService->getSheetData($spreadsheetId, $sheetName);
+            
+            if (empty($rows)) {
+                return response()->json([
+                    'status' => 'empty',
+                    'message' => 'No data found in sheet.',
+                    'spreadsheet_id' => $spreadsheetId,
+                    'sheet_name' => $sheetName,
+                ]);
+            }
+
+            $headers = array_keys($rows[0]);
+            $top10 = array_slice($rows, 0, 10);
+
+            return response()->json([
+                'status' => 'success',
+                'category' => $category,
+                'type' => $type,
+                'spreadsheet_id' => $spreadsheetId,
+                'sheet_name' => $sheetName,
+                'total_rows_found' => count($rows),
+                'headers' => $headers,
+                'fi rst_10_rows' => $top10
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to fetch sheet data',
+                'details' => $e->getMessage()
+            ], 500);
+        }
     }
 }

@@ -95,6 +95,7 @@ class SyncWebflowJob implements ShouldQueue
             $created = 0;
             $updated = 0;
             $errors = 0;
+            $skipped = 0;
 
             if ($this->type === 'main') {
                 // 3. Fetch Webflow Schema to only send valid fields
@@ -107,8 +108,26 @@ class SyncWebflowJob implements ShouldQueue
                 $existingItems = $webflowService->getAllItems($collectionId);
                 Log::info("Found " . count($existingItems) . " existing Webflow items");
 
+                // PRE-FILTER ROWS: Remove rows with empty IDs to avoid unnecessary chunks
+                $validRows = [];
+                foreach ($rows as $row) {
+                    $tradeId = $row['ID'] ?? $row['id'] ?? $row['Trade ID'] ?? $row['trade_id'] ?? $row['trade-id'] ?? null;
+                    if (!$tradeId || trim((string)$tradeId) === '') {
+                        $skipped++;
+                    } else {
+                        $validRows[] = $row;
+                    }
+                }
+
+                if ($syncJob) {
+                    $syncJob->update([
+                        'skipped_count' => $skipped,
+                        'processed_rows' => $skipped
+                    ]);
+                }
+
                 // 5. Perform Upsert in Chunks (Bulk)
-                $chunks = array_chunk($rows, 100);
+                $chunks = array_chunk($validRows, 100);
                 
                 if ($syncJob) {
                     $syncJob->update(['total_chunks' => count($chunks)]);
@@ -183,7 +202,7 @@ class SyncWebflowJob implements ShouldQueue
                         // Automatically format date fields for Webflow
                         if (str_contains($webflowKey, 'date') && $val !== '') {
                             try {
-                                $val = \Carbon\Carbon::parse($val)->toIso8601ZuluString();
+                                $val = \Carbon\Carbon::parse($val)->format('Y-m-d');
                             } catch (\Exception $e) {
                                 // Keep original if parsing fails
                             }
